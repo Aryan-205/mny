@@ -4,7 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./transcode": "./src/transcodeWebmToMp4.ts"
+  },
+  "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.10",
+    "@ffmpeg/util": "^0.12.1"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

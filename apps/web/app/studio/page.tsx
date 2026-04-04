@@ -13,7 +13,15 @@ import {
   Video,
   WandSparkles,
 } from "lucide-react";
-import { isRecording, startRecording, stopRecording } from "@repo/recorder";
+import {
+  isStudioRecording,
+  startStudioRecording,
+  stopStudioRecording,
+} from "@repo/recorder";
+import {
+  recordingNeedsMp4Transcode,
+  transcodeWebmToMp4,
+} from "@repo/recorder/transcode";
 import { AppNavbar } from "@/components/app-navbar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -31,10 +39,11 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 
 export default function StudioPage() {
-  const [status, setStatus] = useState<"idle" | "recording" | "saved">("idle");
+  const [status, setStatus] = useState<"idle" | "recording" | "saved" | "encoding">("idle");
   const [timer, setTimer] = useState(0);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [recordSystemAudio, setRecordSystemAudio] = useState(true);
 
   const timerLabel = useMemo(() => {
     const m = String(Math.floor(timer / 60)).padStart(2, "0");
@@ -44,7 +53,7 @@ export default function StudioPage() {
 
   async function handleStart() {
     try {
-      await startRecording();
+      await startStudioRecording({ systemAudio: recordSystemAudio });
       setStatus("recording");
       const start = Date.now();
       const id = window.setInterval(() => {
@@ -53,19 +62,29 @@ export default function StudioPage() {
       (window as typeof window & { __studioTimer?: number }).__studioTimer = id;
     } catch (error) {
       console.error(error);
-      alert("Microphone permission is required to record.");
+      alert("Allow screen, camera, and microphone when prompted to record.");
     }
   }
 
   async function handleStop() {
-    if (!isRecording()) return;
+    if (!isStudioRecording()) return;
     setSaving(true);
+    setStatus("encoding");
     try {
-      const result = await stopRecording();
-      setAudioUrl(result.url);
+      const raw = await stopStudioRecording();
+      let blob = raw.blob;
+      let url = raw.url;
+      if (recordingNeedsMp4Transcode(raw.mimeType)) {
+        URL.revokeObjectURL(raw.url);
+        blob = await transcodeWebmToMp4(blob);
+        url = URL.createObjectURL(blob);
+      }
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      setVideoUrl(url);
       setStatus("saved");
     } catch (error) {
       console.error(error);
+      setStatus("idle");
     } finally {
       const id = (window as typeof window & { __studioTimer?: number }).__studioTimer;
       if (id) window.clearInterval(id);
@@ -103,17 +122,23 @@ export default function StudioPage() {
               <CardDescription>Studio canvas and transport controls</CardDescription>
             </div>
             <Badge variant={status === "recording" ? "default" : "secondary"}>
-              {status === "recording" ? `REC ${timerLabel}` : status.toUpperCase()}
+              {status === "encoding"
+                ? "ENCODING MP4"
+                : status === "recording"
+                  ? `REC ${timerLabel}`
+                  : status.toUpperCase()}
             </Badge>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex aspect-video items-center justify-center rounded-lg border bg-muted/30">
               <div className="text-center">
                 <p className="text-sm text-muted-foreground">Preview Surface</p>
-                {audioUrl ? (
-                  <audio className="mt-3" controls src={audioUrl} />
+                {videoUrl ? (
+                  <video className="mt-3 max-h-64 w-full rounded-md" controls src={videoUrl} />
                 ) : (
-                  <p className="mt-2 text-xs text-muted-foreground">No recording yet</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    No recording yet — one MP4 with screen, system audio (optional), face PiP, and mic.
+                  </p>
                 )}
               </div>
             </div>
@@ -129,7 +154,7 @@ export default function StudioPage() {
                 <Button
                   size="icon"
                   onClick={status === "recording" ? handleStop : handleStart}
-                  disabled={saving}
+                  disabled={saving || status === "encoding"}
                 >
                   {status === "recording" ? (
                     <CircleStop className="h-4 w-4" />
@@ -189,7 +214,11 @@ export default function StudioPage() {
               </Select>
               <div className="flex items-center justify-between text-sm">
                 <span>Record system audio</span>
-                <Switch />
+                <Switch
+                  checked={recordSystemAudio}
+                  onCheckedChange={setRecordSystemAudio}
+                  disabled={status === "recording" || status === "encoding"}
+                />
               </div>
               <Separator />
               <Button variant="outline" className="w-full" asChild>
